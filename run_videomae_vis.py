@@ -33,6 +33,25 @@ class DataAugmentationForVideoMAE(object):
             self.masked_position_generator = TubeMaskingGenerator(
                 args.window_size, args.mask_ratio
             )
+        # > Yiran added: for mice dataset we should use random masking in each frame
+        elif args.mask_type == 'frame_random':
+            def _gen():
+                """
+                Random mask generator
+                """
+                tubelet = getattr(args, 'tubelet_size', 2) # Reads tubelet_size from args (default 2). A tubelet spans how many frames in time
+                ps = args.patch_size[0] if isinstance(args.patch_size, tuple) else args.patch_size # Gets the spatial patch size (e.g., 16). Handles both tuple (16,16) and int 16
+                T_ = args.num_frames // tubelet # Number of temporal tokens (frames divided by tubelet size). E.g., 16 frames, tubelet=2 → T_=8
+                H_ = args.input_size // ps # Patch grid height/width per frame. With 224 input and 16-pixel patches → H_=W_=14
+                W_ = H_
+                hw = H_ * W_ # Number of spatial patches per frame
+                m_hw = max(1, int(round(args.mask_ratio * hw))) # How many patches to mask per frame, at least 1
+                mask = np.zeros(T_ * hw, dtype=bool) # Allocates a 1D boolean mask for the whole clip (T_ frames × hw patches), initialized to False (unmasked)
+                for t in range(T_): # > For each time step
+                    idx = np.random.choice(hw, size=m_hw, replace=False) # picks m_hw unique spatial positions within the frame
+                    mask[t * hw + idx] = True  # marks those positions as masked in the global 1D mask using an offset of t*hw
+                return mask  # Returns a 1D numpy.bool_ mask of length T_ * H_ * W_ (True = masked)
+            self.masked_position_generator = _gen
 
     def __call__(self, images):
         process_data , _ = self.transform(images)
@@ -50,7 +69,7 @@ def get_args():
     parser.add_argument('img_path', type=str, help='input video path')
     parser.add_argument('save_path', type=str, help='save video path')
     parser.add_argument('model_path', type=str, help='checkpoint path of model')
-    parser.add_argument('--mask_type', default='random', choices=['random', 'tube'],
+    parser.add_argument('--mask_type', default='random', choices=['random', 'tube', 'frame_random'], # > Yiran edited "frame_random"
                         type=str, help='masked strategy of video tokens/patches')
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)

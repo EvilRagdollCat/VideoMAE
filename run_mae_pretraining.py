@@ -23,13 +23,17 @@ def get_args():
     parser.add_argument('--save_ckpt_freq', default=50, type=int)
 
     # Model parameters
+    # > Yiran added
+    parser.add_argument('--dataset_type', default='videomae',
+                    choices=['videomae', 'mice_pretrain'])
+
     parser.add_argument('--model', default='pretrain_videomae_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
 
     parser.add_argument('--decoder_depth', default=4, type=int,
                         help='depth of decoder')
 
-    parser.add_argument('--mask_type', default='tube', choices=['random', 'tube'],
+    parser.add_argument('--mask_type', default='tube', choices=['random', 'tube', 'frame_random'], # > Yiran edited "frame_random"
                         type=str, help='masked strategy of video tokens/patches')
 
     parser.add_argument('--mask_ratio', default=0.75, type=float,
@@ -114,6 +118,16 @@ def get_args():
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    # ROI switches
+    parser.add_argument('--use_motion_roi', action='store_true', help='enable motion-ROI cropping')
+    parser.add_argument('--roi_grid', type=int, default=4, help='GxG tiles')
+    parser.add_argument('--roi_topk', type=int, default=1, help='union of top-k tiles')
+    parser.add_argument('--roi_margin', type=float, default=0.10, help='margin ratio around union box')
+    parser.add_argument('--roi_min_wh', type=int, default=96, help='min side after union before resize')
+    parser.add_argument('--roi_snap16', action='store_true', help='snap ROI side length to multiples of 16')
+    parser.add_argument('--roi_jitter', type=int, default=0, help='random jitter (pixels) applied after ROI')
+    parser.add_argument('--roi_prob', type=float, default=1.0)
 
     return parser.parse_args()
 

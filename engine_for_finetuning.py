@@ -150,6 +150,9 @@ def validation_one_epoch(data_loader, model, device):
     # switch to evaluation mode
     model.eval()
 
+    # > Yiran added
+    acc5_supported = None
+
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
         target = batch[1]
@@ -161,7 +164,16 @@ def validation_one_epoch(data_loader, model, device):
             output = model(videos)
             loss = criterion(output, target)
 
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        # acc1, acc5 = accuracy(output, target, topk=(1, 5))
+
+        # > Yiran edited
+        if acc5_supported is None:
+            acc5_supported = (output.shape[-1] >= 5)
+        if acc5_supported:
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        else:
+            (acc1,) = accuracy(output, target, topk=(1,))
+            acc5 = acc1  # placeholder to keep logging/file format unchanged
 
         batch_size = videos.shape[0]
         metric_logger.update(loss=loss.item())
@@ -186,7 +198,8 @@ def final_test(data_loader, model, device, file):
     # switch to evaluation mode
     model.eval()
     final_result = []
-    
+    # > Yiran added
+    acc5_supported = None
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
         target = batch[1]
@@ -209,7 +222,16 @@ def final_test(data_loader, model, device, file):
                                                 str(int(split_nb[i].cpu().numpy())))
             final_result.append(string)
 
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        # acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        # > Yiran edited
+        if acc5_supported is None:
+            acc5_supported = (output.shape[-1] >= 5)
+
+        if acc5_supported:
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        else:
+            (acc1,) = accuracy(output, target, topk=(1,))
+            acc5 = acc1  # placeholder to keep logging/file format unchanged
 
         batch_size = videos.shape[0]
         metric_logger.update(loss=loss.item())
@@ -245,7 +267,8 @@ def merge(eval_path, num_tasks):
             label = line.split(']')[1].split(' ')[1]
             chunk_nb = line.split(']')[1].split(' ')[2]
             split_nb = line.split(']')[1].split(' ')[3]
-            data = np.fromstring(line.split('[')[1].split(']')[0], dtype=np.float, sep=',')
+            #data = np.fromstring(line.split('[')[1].split(']')[0], dtype=np.float, sep=',')
+            data = np.fromstring(line.split('[')[1].split(']')[0], dtype=float, sep=',') # > Yiran edited
             data = softmax(data)
             if not name in dict_feats:
                 dict_feats[name] = []

@@ -147,7 +147,7 @@ def get_args():
     parser.add_argument('--num_segments', type=int, default= 1)
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)
-    parser.add_argument('--data_set', default='Kinetics-400', choices=['Kinetics-400', 'SSV2', 'UCF101', 'HMDB51','image_folder'],
+    parser.add_argument('--data_set', default='Kinetics-400', choices=['Kinetics-400', 'SSV2', 'UCF101', 'HMDB51','image_folder', 'mice_classification'], # > Yiran edited
                         type=str, help='dataset')
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -187,6 +187,16 @@ def get_args():
                         help='url used to set up distributed training')
 
     parser.add_argument('--enable_deepspeed', action='store_true', default=False)
+
+    # ROI switches
+    parser.add_argument('--use_motion_roi', action='store_true', help='enable motion-ROI cropping')
+    parser.add_argument('--roi_grid', type=int, default=4, help='GxG tiles')
+    parser.add_argument('--roi_topk', type=int, default=1, help='union of top-k tiles')
+    parser.add_argument('--roi_margin', type=float, default=0.10, help='margin ratio around union box')
+    parser.add_argument('--roi_min_wh', type=int, default=96, help='min side after union before resize')
+    parser.add_argument('--roi_snap16', action='store_true', help='snap ROI side length to multiples of 16')
+    parser.add_argument('--roi_jitter', type=int, default=0, help='random jitter (pixels) applied after ROI')
+    parser.add_argument('--roi_prob', type=float, default=1.0, help='Probability to use motion ROI per sample (train only)')
 
     known_args, _ = parser.parse_known_args()
 
@@ -247,7 +257,9 @@ def main(args, ds_init):
         sampler_test = torch.utils.data.DistributedSampler(
             dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=False)
     else:
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        # sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val) if dataset_val is not None else None # > Yiran edited: in case there's no val.csv
+        sampler_test = torch.utils.data.SequentialSampler(dataset_test) # > Yiran added
 
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
@@ -326,7 +338,12 @@ def main(args, ds_init):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.finetune, map_location='cpu', check_hash=True)
         else:
-            checkpoint = torch.load(args.finetune, map_location='cpu')
+            # checkpoint = torch.load(args.finetune, map_location='cpu')
+            try: # > Yiran edited
+                checkpoint = torch.load(args.finetune, map_location='cpu', weights_only=False)
+            except TypeError:
+                # for older torch that doesn't have weights_only arg
+                checkpoint = torch.load(args.finetune, map_location='cpu')
 
         print("Load ckpt from %s" % args.finetune)
         checkpoint_model = None
@@ -475,7 +492,8 @@ def main(args, ds_init):
     if args.eval:
         preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
         test_stats = final_test(data_loader_test, model, device, preds_file)
-        torch.distributed.barrier()
+        if args.distributed: # > Yiran added: i dont have distributed computation
+            torch.distributed.barrier()
         if global_rank == 0:
             print("Start merging results...")
             final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
@@ -540,7 +558,8 @@ def main(args, ds_init):
 
     preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
     test_stats = final_test(data_loader_test, model, device, preds_file)
-    torch.distributed.barrier()
+    if args.distributed: # > Yiran added:I dont have distributed computation
+        torch.distributed.barrier()
     if global_rank == 0:
         print("Start merging results...")
         final_top1 ,final_top5 = merge(args.output_dir, num_tasks)

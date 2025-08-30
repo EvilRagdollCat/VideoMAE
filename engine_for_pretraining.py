@@ -7,6 +7,10 @@ import utils
 from einops import rearrange
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
+# > Yiran added
+from pathlib import Path
+from utils_mask_viz import unnormalize_to_uint8, draw_mask_on_frames, save_grid
+
 def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
@@ -33,6 +37,44 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
         videos, bool_masked_pos = batch
         videos = videos.to(device, non_blocking=True)
         bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
+
+        # > Yiran added: masking visualization
+        if epoch == 0 and step < 50 and utils.is_main_process():
+            try:
+                v0 = videos[0]  # (C,T,H,W)
+                frames = unnormalize_to_uint8(v0, mean=(0.485,0.456,0.406), std=(0.229,0.224,0.225))  # (T,H,W,3) uint8
+        
+                mask_vec = bool_masked_pos[0].detach().cpu().numpy().astype(bool)  # (T_*H_*W_,)
+                #ps = args.patch_size[0] if isinstance(args.patch_size, tuple) else args.patch_size
+                ps = patch_size
+                #tube = getattr(args, 'tubelet_size', 2)
+                tube = getattr(getattr(model, 'encoder', model).patch_embed, 'tubelet_size', 2)
+                T, H, W = int(v0.shape[1]), int(v0.shape[2]), int(v0.shape[3])
+
+        
+                vis_frames = draw_mask_on_frames(
+                    frames=frames,
+                    mask=mask_vec,
+                    num_frames=T,#args.num_frames,
+                    input_size=H,#args.input_size,
+                    patch_size=ps,
+                    tubelet_size=tube,
+                    color=(0, 0, 255)
+                )
+        
+                #out_dir = Path(args.output_dir) / "mask_viz"
+                #out_path = out_dir / f"epoch{epoch:02d}_step{data_iter_step:04d}.jpg"
+                out_root = Path(getattr(log_writer, 'log_dir', '.'))
+                out_dir = out_root / "mask_viz"
+                out_path = out_dir / f"epoch{epoch:02d}_step{step:04d}.jpg"
+                # Normally T_=num_frames//tubelet_size
+                cols = max(1, min(8, len(vis_frames)))
+                save_grid(vis_frames, out_path, cols=cols)
+            except Exception as e:
+                # Make sure the errors in visualization wouldn't stop the training
+                print(f"[mask_viz] skip at step {data_iter_step}: {e}")
+
+
 
         with torch.no_grad():
             # calculate the predict label
