@@ -189,14 +189,30 @@ def get_args():
     parser.add_argument('--enable_deepspeed', action='store_true', default=False)
 
     # ROI switches
-    parser.add_argument('--use_motion_roi', action='store_true', help='enable motion-ROI cropping')
-    parser.add_argument('--roi_grid', type=int, default=4, help='GxG tiles')
-    parser.add_argument('--roi_topk', type=int, default=1, help='union of top-k tiles')
-    parser.add_argument('--roi_margin', type=float, default=0.10, help='margin ratio around union box')
-    parser.add_argument('--roi_min_wh', type=int, default=96, help='min side after union before resize')
-    parser.add_argument('--roi_snap16', action='store_true', help='snap ROI side length to multiples of 16')
-    parser.add_argument('--roi_jitter', type=int, default=0, help='random jitter (pixels) applied after ROI')
-    parser.add_argument('--roi_prob', type=float, default=1.0, help='Probability to use motion ROI per sample (train only)')
+    #parser.add_argument('--use_motion_roi', action='store_true', help='enable motion-ROI cropping')
+    #parser.add_argument('--roi_grid', type=int, default=4, help='GxG tiles')
+    #parser.add_argument('--roi_topk', type=int, default=1, help='union of top-k tiles')
+    #parser.add_argument('--roi_margin', type=float, default=0.10, help='margin ratio around union box')
+    #parser.add_argument('--roi_min_wh', type=int, default=96, help='min side after union before resize')
+    #parser.add_argument('--roi_snap16', action='store_true', help='snap ROI side length to multiples of 16')
+    #parser.add_argument('--roi_jitter', type=int, default=0, help='random jitter (pixels) applied after ROI')
+    #parser.add_argument('--roi_prob', type=float, default=1.0, help='Probability to use motion ROI per sample (train only)')
+
+    # > dlc switches
+    parser.add_argument('--use_dlc_roi', action='store_true',
+                        help='Use DeepLabCut ROI for classification')
+    parser.add_argument('--dlc_dir', type=str, default=None,
+                        help='Directory containing DLC tracking files')
+    parser.add_argument('--dlc_likelihood_threshold', type=float, default=0.5,
+                        help='Minimum confidence for DLC keypoints')
+    parser.add_argument('--roi_padding', type=float, default=0.25,
+                        help='Padding ratio around detected mouse')
+    parser.add_argument('--roi_min_size', type=int, default=96,
+                        help='Minimum ROI size in pixels')
+    parser.add_argument('--roi_snap16', action='store_true',
+                        help='Snap ROI to 16-pixel grid')
+    parser.add_argument('--roi_prob', type=float, default=1.0,
+                        help='Probability of using ROI during training')
 
     known_args, _ = parser.parse_known_args()
 

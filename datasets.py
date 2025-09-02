@@ -6,7 +6,7 @@ from masking_generator import TubeMaskingGenerator
 from kinetics import VideoClsDataset, VideoMAE
 from ssv2 import SSVideoClsDataset
 from mice_dataset import MicePretrainDataset, MiceClassificationDataset # > Yiran added
-from utils_motion_roi import roi_by_tiles, expand_and_snap # > Yiran added
+#from utils_motion_roi import roi_by_tiles, expand_and_snap # > Yiran added
 
 
 class DataAugmentationForVideoMAE(object):
@@ -108,16 +108,24 @@ def build_pretraining_dataset(args):
             #roi_prob=args.roi_prob,
             #roi_jitter=args.roi_jitter,
             #roi_snap16=args.roi_snap16,
-            use_motion_roi=getattr(args, 'use_motion_roi', False),
-            roi_grid=getattr(args, 'roi_grid', 4),
-            roi_topk=getattr(args, 'roi_topk', 1),
-            roi_margin=getattr(args, 'roi_margin', 0.10),
-            roi_min_wh=getattr(args, 'roi_min_wh', 96),
-            roi_prob=getattr(args, 'roi_prob', 1.0),
-            roi_jitter=getattr(args, 'roi_jitter', 0.0),
+            #use_motion_roi=getattr(args, 'use_motion_roi', False),
+            #roi_grid=getattr(args, 'roi_grid', 4),
+            #roi_topk=getattr(args, 'roi_topk', 1),
+            #roi_margin=getattr(args, 'roi_margin', 0.10),
+            #roi_min_wh=getattr(args, 'roi_min_wh', 96),
+            #roi_prob=getattr(args, 'roi_prob', 1.0),
+            #roi_jitter=getattr(args, 'roi_jitter', 0.0),
+            #roi_snap16=getattr(args, 'roi_snap16', False),
+            # > dlc parameters
+            use_dlc_roi=getattr(args, 'use_dlc_roi', False),
+            dlc_dir=getattr(args, 'dlc_dir', None),
+            dlc_likelihood_threshold=getattr(args, 'dlc_likelihood_threshold', 0.5),
+            roi_padding=getattr(args, 'roi_padding', 0.2),
+            roi_min_size=getattr(args, 'roi_min_size', 96),
             roi_snap16=getattr(args, 'roi_snap16', False),
+            roi_prob=getattr(args, 'roi_prob', 0.9),
         )
-        print(f"[mice_pretrain] videos={len(dataset)}")
+        print(f"[mice_pretrain] videos={len(dataset)}, use_dlc_roi={args.use_dlc_roi}")
         return dataset
 
 
@@ -284,13 +292,21 @@ def build_dataset(is_train, test_mode, args):
             input_size=args.input_size,
             mode=mode,
             num_sample=(args.num_sample if mode == "train" else 1),
-            use_motion_roi=getattr(args, 'use_motion_roi', False),
-            roi_grid=args.roi_grid,
-            roi_topk=args.roi_topk,
-            roi_margin=args.roi_margin,
-            roi_min_wh=args.roi_min_wh,
+            #use_motion_roi=getattr(args, 'use_motion_roi', False),
+            #roi_grid=args.roi_grid,
+            #roi_topk=args.roi_topk,
+            #roi_margin=args.roi_margin,
+            #roi_min_wh=args.roi_min_wh,
+            #roi_snap16=getattr(args, 'roi_snap16', False),
+            #roi_jitter=args.roi_jitter,
+            #roi_prob=getattr(args, 'roi_prob', 1.0),
+            # > dlc parameters
+            use_dlc_roi=getattr(args, 'use_dlc_roi', False),
+            dlc_dir=getattr(args, 'dlc_dir', None),
+            dlc_likelihood_threshold=getattr(args, 'dlc_likelihood_threshold', 0.5),
+            roi_padding=getattr(args, 'roi_padding', 0.25),
+            roi_min_size=getattr(args, 'roi_min_size', 96),
             roi_snap16=getattr(args, 'roi_snap16', False),
-            roi_jitter=args.roi_jitter,
             roi_prob=getattr(args, 'roi_prob', 1.0),
         )
         nb_classes = 2  
