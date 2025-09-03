@@ -50,38 +50,28 @@ def _read_clip_with_dlc(path, num_frames, sampling_rate, input_size,
         frames = vr.get_batch(idx).asnumpy()
         frames = np.stack([cv2.resize(f, (input_size, input_size)) for f in frames])
     else:
-        # > get dlc bbox
-        y1, y2, x1, x2 = get_bbox_from_dlc(
-            dlc_df, idx, 
-            likelihood_threshold=dlc_likelihood_threshold,
-            padding=roi_padding, 
-            min_size=roi_min_size
-        )
         
         # > read the frame and crop
         frames = vr.get_batch(idx).asnumpy()
         H, W = frames.shape[1], frames.shape[2]
-        
-        # > make sure the bbox is in the frame
-        y1 = max(0, min(y1, H-1))
-        y2 = max(y1+1, min(y2, H))
-        x1 = max(0, min(x1, W-1))
-        x2 = max(x1+1, min(x2, W))
-        
-        # Snap to 16 if needed
-        if roi_snap16:
-            side = max(roi_min_size, max(y2-y1, x2-x1))
-            side = int(np.ceil(side / 16.0) * 16)
-            cy, cx = (y1 + y2) // 2, (x1 + x2) // 2
-            y1 = max(0, min(H - side, cy - side // 2))
-            y2 = y1 + side
-            x1 = max(0, min(W - side, cx - side // 2))
-            x2 = x1 + side
-        
+    
         # > crop and resize
         crops = []
-        for frame in frames:
-            crop = frame[y1:y2, x1:x2]
+        for i, frame_idx in enumerate(idx):  # define frame_idx
+            y1, y2, x1, x2 = get_bbox_from_dlc(
+                dlc_df, frame_idx,
+                likelihood_threshold=dlc_likelihood_threshold,
+                margin=15,
+                min_size=roi_min_size
+            )
+
+            # make sure bbox is within the boundary
+            y1 = max(0, min(y1, H-1))
+            y2 = max(y1+1, min(y2, H))
+            x1 = max(0, min(x1, W-1))
+            x2 = max(x1+1, min(x2, W))
+
+            crop = frames[i, y1:y2, x1:x2]
             crop = cv2.resize(crop, (input_size, input_size), interpolation=cv2.INTER_AREA)
             crops.append(crop)
         frames = np.stack(crops)
@@ -178,43 +168,161 @@ class MicePretrainDataset(Dataset):
     def __len__(self):
         return len(self.paths)
     
+    #def __getitem__(self, idx):
+    #    for _ in range(self.max_retries):
+    #        try:
+    #            p = self.paths[idx]
+
+    #            vr = VideoReader(str(p), ctx=cpu(0))
+    #            total = len(vr)
+    #            idx = _uniform_sample_indices(self.num_frames, total, self.sampling_rate)
+
+    #            if random.random() < 0.01:  
+    #                print(f"Pretrain - {Path(p).stem}: frames {idx[0]}-{idx[-1]} (total: {total})")
+                
+    #            # > whether to use dlc roi
+    #            use_roi = self.use_dlc_roi and (random.random() < self.roi_prob)
+                
+    #            if use_roi and self.dlc_manager:
+    #                vid = _read_clip_with_dlc(
+    #                    p, self.num_frames, self.sampling_rate, self.input_size,
+    #                    self.dlc_manager, self.dlc_likelihood_threshold,
+    #                    self.roi_padding, self.roi_min_size, self.roi_snap16
+    #                )
+    #            else:
+    #                vid = _read_clip_full_frame(
+    #                    p, self.num_frames, self.sampling_rate, self.input_size
+    #                )
+                
+    #            mask = _make_bool_mask(
+    #                self.num_frames, self.input_size, self.mask_ratio,
+    #                self.mask_type, self.tubelet_size
+    #            )
+                
+    #            return vid, mask
+                
+    #        except Exception as e:
+    #            print(f"Error loading {self.paths[idx]}: {e}")
+    #            idx = (idx + 1) % len(self.paths)
+    #    
+    #    raise RuntimeError(f"Failed to load any video after {self.max_retries} attempts")
+
     def __getitem__(self, idx):
         for _ in range(self.max_retries):
             try:
                 p = self.paths[idx]
 
+                # > only visualize the first 10 samples
+                #visualize = (idx < 10)
+
                 vr = VideoReader(str(p), ctx=cpu(0))
                 total = len(vr)
-                idx = _uniform_sample_indices(self.num_frames, total, self.sampling_rate)
+                frame_indices = _uniform_sample_indices(self.num_frames, total, self.sampling_rate)
 
-                if random.random() < 0.01:  
-                    print(f"Pretrain - {Path(p).stem}: frames {idx[0]}-{idx[-1]} (total: {total})")
-                
-                # > whether to use dlc roi
+                # > get original frame to compare
+                #if visualize:
+                #    raw_frames = vr.get_batch(frame_indices).asnumpy()
+
                 use_roi = self.use_dlc_roi and (random.random() < self.roi_prob)
-                
+
+                #if visualize and use_roi and self.dlc_manager:
+                #    dlc_df = self.dlc_manager.load_dlc_data(p)
+                #    if dlc_df is not None:
+                #    
+                #        row = dlc_df.iloc[frame_indices[0] if frame_indices[0] < len(dlc_df) else -1]
+
+                    
+                #        debug_frame = raw_frames[0].copy()
+
+                    
+                #        for i in range(0, len(row), 3):
+                #            if i+2 < len(row):
+                #                x, y, likelihood = row.iloc[i], row.iloc[i+1], row.iloc[i+2]
+                #                if not np.isnan(x):
+                #                    color = (0, 255, 0) if likelihood > self.dlc_likelihood_threshold else (0, 0, 255)
+                #                    cv2.circle(debug_frame, (int(x), int(y)), 5, color, -1)
+                #                    cv2.putText(debug_frame, f"{i//3}", (int(x)+8, int(y)-8),
+                #                              cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+                    
+                #        y1, y2, x1, x2 = get_bbox_from_dlc(
+                #            dlc_df, frame_indices[0],
+                #            self.dlc_likelihood_threshold,
+                #            self.roi_padding,
+                #            self.roi_min_size
+                #        )
+                #        cv2.rectangle(debug_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+
+                    
+                #        dlc_debug_path = f"/data/videomae_outputs/pretrain_crop_check/dlc_debug_{idx:03d}.jpg"
+                #        cv2.imwrite(dlc_debug_path, cv2.cvtColor(debug_frame, cv2.COLOR_RGB2BGR))
+                #        print(f"[DLC DEBUG] Saved keypoints visualization to {dlc_debug_path}")
+
                 if use_roi and self.dlc_manager:
                     vid = _read_clip_with_dlc(
                         p, self.num_frames, self.sampling_rate, self.input_size,
                         self.dlc_manager, self.dlc_likelihood_threshold,
                         self.roi_padding, self.roi_min_size, self.roi_snap16
                     )
+                    #crop_status = "DLC_ROI"
                 else:
                     vid = _read_clip_full_frame(
                         p, self.num_frames, self.sampling_rate, self.input_size
                     )
+                    #crop_status = "FULL_FRAME"
+
+            
+                #if visualize:
+                #    import matplotlib
+                #    matplotlib.use('Agg')
+                #    import matplotlib.pyplot as plt
+                #    from pathlib import Path
+
+                #    save_dir = Path("/data/videomae_outputs/pretrain_crop_check")
+                #    save_dir.mkdir(exist_ok=True)
+
+                #    vid_np = vid.numpy()
+                #    vid_display = vid_np.transpose(1,2,3,0)
+                #    vid_display = vid_display * IMAGENET_STD + IMAGENET_MEAN
+                #    vid_display = np.clip(vid_display * 255, 0, 255).astype(np.uint8)
+
+                    # > save the first frame to compare
+                #    original = cv2.resize(raw_frames[0], (224, 224))
+                #    processed = vid_display[0]
+
+                    # > concatenate
+                #    comparison = np.hstack([original, processed])
+
                 
+                #    comparison = cv2.putText(comparison, "Original", (10, 30),
+                #                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                #    comparison = cv2.putText(comparison, crop_status, (234, 30),
+                #                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+                
+                #    save_path = save_dir / f"sample_{idx:03d}_{Path(p).stem}_{crop_status}.jpg"
+                #    cv2.imwrite(str(save_path), cv2.cvtColor(comparison, cv2.COLOR_RGB2BGR))
+
+                
+                #    print(f"\n[CROP CHECK {idx}] {Path(p).stem}: {crop_status}")
+                #    if use_roi and self.dlc_manager:
+                #        dlc_df = self.dlc_manager.load_dlc_data(p)
+                #        print(f"  DLC found: {dlc_df is not None}")
+                #    print(f"  Saved: {save_path}")
+
                 mask = _make_bool_mask(
                     self.num_frames, self.input_size, self.mask_ratio,
                     self.mask_type, self.tubelet_size
                 )
-                
+
                 return vid, mask
-                
+
             except Exception as e:
                 print(f"Error loading {self.paths[idx]}: {e}")
+                import traceback
+                traceback.print_exc()
                 idx = (idx + 1) % len(self.paths)
-        
+
         raise RuntimeError(f"Failed to load any video after {self.max_retries} attempts")
 
 

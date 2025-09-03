@@ -19,58 +19,167 @@ def load_dlc_tracking(dlc_path: str) -> pd.DataFrame:
     else:
         raise ValueError(f"Unsupported format: {dlc_path.suffix}")
 
-def get_bbox_from_dlc(dlc_df: pd.DataFrame, 
-                      frame_indices: List[int],
-                      likelihood_threshold: float = 0.5,
-                      padding: float = 0.2,
-                      min_size: int = 96) -> Tuple[int, int, int, int]:
-    """
-    Get bboxs from dlc
-    """
-    all_x, all_y = [], []
+def _read_clip_with_dlc(path, num_frames, sampling_rate, input_size,
+                        dlc_manager, dlc_likelihood_threshold=0.5,
+                        roi_padding=0.2, roi_min_size=96, roi_snap16=False):
+    vr = VideoReader(str(path), ctx=cpu(0))
+    total = len(vr)
+    idx = _uniform_sample_indices(num_frames, total, sampling_rate)
     
-    for idx in frame_indices:
-        if idx >= len(dlc_df):
-            idx = len(dlc_df) - 1
+    dlc_df = dlc_manager.load_dlc_data(path)
+    
+    if dlc_df is None:
+        frames = vr.get_batch(idx).asnumpy()
+        frames = np.stack([cv2.resize(f, (input_size, input_size)) for f in frames])
+    else:
+        frames = vr.get_batch(idx).asnumpy()
+        H, W = frames.shape[1], frames.shape[2]
         
-        row = dlc_df.iloc[idx]
+        crops = []
+        for i, frame_idx in enumerate(idx):
+            # > calculate bbox for each frame
+            y1, y2, x1, x2 = get_bbox_from_dlc(
+                dlc_df, frame_idx,
+                likelihood_threshold=dlc_likelihood_threshold,
+                margin=15,  # fixed margin
+                min_size=roi_min_size
+            )
+            
+            # > make sure bbox is in the boundary
+            y1 = max(0, min(y1, H-1))
+            y2 = max(y1+1, min(y2, H))
+            x1 = max(0, min(x1, W-1))
+            x2 = max(x1+1, min(x2, W))
+            
+            # > crop the current frame
+            crop = frames[i, y1:y2, x1:x2]
+            
+            # > resize to the target size
+            crop = cv2.resize(crop, (input_size, input_size), interpolation=cv2.INTER_AREA)
+            crops.append(crop)
         
-        # > Get the coordinates: (x, y, likelihood) 
-        for i in range(0, len(row), 3):
-            if i+2 < len(row):
-                #x, y, likelihood = row[i], row[i+1], row[i+2]
-                x, y, likelihood = row.iloc[i], row.iloc[i+1], row.iloc[i+2]
-                if likelihood > likelihood_threshold and not np.isnan(x):
-                    all_x.append(x)
-                    all_y.append(y)
+        frames = np.stack(crops)
+    
+    frames = frames.astype(np.float32) / 255.0
+    frames = (frames - IMAGENET_MEAN[None, None, None, :]) / IMAGENET_STD[None, None, None, :]
+    frames = np.transpose(frames, (3, 0, 1, 2))
+    
+    return torch.from_numpy(frames.astype(np.float32))
+
+
+def get_bbox_from_dlc(dlc_df: pd.DataFrame, 
+                      #frame_indices: List[int],
+                      frame_idx: int,
+                      likelihood_threshold: float = 0.6,
+                      padding: float = 0.2,
+                      min_size: int = 1,
+                      margin: int = 15,
+                      video_path: Path = None) -> Tuple[int, int, int, int]:
+    """
+    bbox calculation from DLC repo. but with only first 7 keypoints being paid attention to
+    """
+    if frame_idx >= len(dlc_df):
+        frame_idx = len(dlc_df) - 1
+    all_x, all_y = [], []
+    row = dlc_df.iloc[frame_idx]
+    
+        
+    for i in range(0, len(row), 3):
+        if i+2 < len(row):
+            x, y, likelihood = row.iloc[i], row.iloc[i+1], row.iloc[i+2]
+                
+            if likelihood > likelihood_threshold and not np.isnan(x):
+                all_x.append(x)
+                all_y.append(y)
     
     if not all_x:
         return (0, min_size, 0, min_size)
     
-    # > Calculate bbox
-    x_min, x_max = min(all_x), max(all_x)
-    y_min, y_max = min(all_y), max(all_y)
+    # > calculate dlc roi
+    x_min = int(np.floor(min(all_x))) - margin  # smaller margin
+    x_max = int(np.ceil(max(all_x))) + margin
+    y_min = int(np.floor(min(all_y))) - margin
+    y_max = int(np.ceil(max(all_y))) + margin
     
-    # > padding
-    width = x_max - x_min
-    height = y_max - y_min
-    x_min -= width * padding
-    x_max += width * padding
-    y_min -= height * padding
-    y_max += height * padding
-    
-    # > min size
-    if x_max - x_min < min_size:
-        center = (x_min + x_max) / 2
-        x_min = center - min_size / 2
-        x_max = center + min_size / 2
-    
-    if y_max - y_min < min_size:
-        center = (y_min + y_max) / 2
-        y_min = center - min_size / 2
-        y_max = center + min_size / 2
+    # > maske sure it's in the bbox
+    x_min = max(0, x_min)
+    y_min = max(0, y_min)
     
     return (int(y_min), int(y_max), int(x_min), int(x_max))
+
+get_bbox_from_dlc.first_call = True
+def visualize_debug_info(debug_info, video_path):
+    
+    import cv2
+    from pathlib import Path
+
+    
+    cap = cv2.VideoCapture(str(video_path))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ret, img = cap.read()
+    cap.release()
+
+    if not ret:
+        print("cant read frame")
+        return
+
+    
+    for kpt in debug_info['keypoints']:
+        if not np.isnan(kpt['x']):
+            x, y = int(kpt['x']), int(kpt['y'])
+            color = (0, 255, 0) if kpt['used'] else (0, 0, 255)  
+            thickness = 2 if kpt['used'] else 1
+
+        
+            cv2.circle(img, (x, y), 8, color, -1)
+            cv2.circle(img, (x, y), 10, (255, 255, 255), 2)
+
+            
+            text = f"K{kpt['idx']}:c={kpt['conf']:.2f}"
+            cv2.putText(img, text, (x+10, y-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.putText(img, text, (x+12, y-12),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+
+    x_min_orig, x_max_orig = debug_info['x_range']
+    y_min_orig, y_max_orig = debug_info['y_range']
+    cv2.rectangle(img,
+                  (int(x_min_orig), int(y_min_orig)),
+                  (int(x_max_orig), int(y_max_orig)),
+                  (255, 0, 0), 2)  
+
+    
+    x_min, y_min, x_max, y_max = debug_info['bbox']
+    cv2.rectangle(img, (x_min, y_min), (x_max, y_max),
+                  (0, 0, 0), 3)  
+    info_text = f"BBox: ({x_min},{y_min})-({x_max},{y_max})"
+    cv2.rectangle(img, (0, 0), (500, 30), (255, 255, 255), -1)
+    cv2.putText(img, info_text, (10, 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+
+    
+    cv2.putText(img, "Green=Used, Red=Skipped", (50, 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    cv2.putText(img, "Blue=Original Range", (50, 80),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+    cv2.putText(img, "Black=Final BBox", (50, 110),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+
+    
+    info_text = [
+        f"X range: {x_min_orig:.1f} - {x_max_orig:.1f}",
+        f"Y range: {y_min_orig:.1f} - {y_max_orig:.1f}",
+        f"Final bbox: ({x_min}, {y_min}) to ({x_max}, {y_max})"
+    ]
+
+    for i, text in enumerate(info_text):
+        cv2.putText(img, text, (50, 150 + i*30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+
+    
+    cv2.imwrite("/data/videomae_outputs/pretrain_crop_check/dlc_debug_visualization.jpg", img)
+    print("saved at: /data/videomae_outputs/pretrain_crop_check/dlc_debug_visualization.jpg")
 
 class DLCManager:
     """
