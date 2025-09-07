@@ -13,18 +13,40 @@ from utils_dlc_roi import DLCManager, get_bbox_from_dlc
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-def _uniform_sample_indices(num_frames, total, sampling_rate):
+def _uniform_sample_indices(num_frames, total, sampling_rate, dlc_df=None, sample_range=0.3): # > focus on the first 5 minutes and skip when there's no mouse
     """
-    Uniformaly sample the indices
+    Uniformaly sample the indices, skipping frames where DLC tracking is invalid (-1)
     """
     span = (num_frames - 1) * sampling_rate + 1
-    if total >= span:
-        start = random.randint(0, total - span)
+    # > Find first valid frame if DLC data available
+    start_min = 0
+    if dlc_df is not None:
+        # > Find first frame where mouse is detected (not -1)
+        for i in range(len(dlc_df)):
+            row = dlc_df.iloc[i]
+            # > Check if any keypoint has valid coordinates (not -1)
+            has_valid = False
+            for j in range(0, len(row), 3):  # x, y, likelihood triplets
+                if j < len(row) and row.iloc[j] != -1:
+                    has_valid = True
+                    break
+            if has_valid:
+                start_min = i
+                break
+
+    if total >= span + start_min:
+        # > Sample from valid range (after mouse appears)
+        end_max = min(total - span, start_min + int((total - start_min) * sample_range))
+
+        if end_max > start_min:
+            start = random.randint(start_min, end_max)
+        else:
+            start = start_min
         idx = [start + i * sampling_rate for i in range(num_frames)]
     else:
-        base = list(range(0, total, max(1, sampling_rate)))[:num_frames]
+        base = list(range(start_min, total, max(1, sampling_rate)))[:num_frames]
         if len(base) == 0:
-            base = [0]
+            base = [start_min]
         while len(base) < num_frames:
             base.append(base[-1])
         idx = base[:num_frames]
@@ -38,12 +60,15 @@ def _read_clip_with_dlc(path, num_frames, sampling_rate, input_size,
     """
     vr = VideoReader(str(path), ctx=cpu(0))
     total = len(vr)
-    idx = _uniform_sample_indices(num_frames, total, sampling_rate)
+    #idx = _uniform_sample_indices(num_frames, total, sampling_rate)
 
     #print(f"Vid {Path(path).stem}: using frame {idx}")
     
     # > load dlc data
     dlc_df = dlc_manager.load_dlc_data(path)
+
+    # Pass DLC data to sampling function
+    idx = _uniform_sample_indices(num_frames, total, sampling_rate, dlc_df=dlc_df)
     
     if dlc_df is None:
         # > use the full frame if no dlc roi
