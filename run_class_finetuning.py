@@ -162,6 +162,10 @@ def get_args():
     parser.add_argument('--no_auto_resume', action='store_false', dest='auto_resume')
     parser.set_defaults(auto_resume=True)
 
+    # > Yiran added
+    parser.add_argument('--freeze_layers', type=int, default=0,
+                    help='Number of transformer blocks to freeze (0-11 for ViT-Base)')
+
     parser.add_argument('--save_ckpt', action='store_true')
     parser.add_argument('--no_save_ckpt', action='store_false', dest='save_ckpt')
     parser.set_defaults(save_ckpt=True)
@@ -416,6 +420,31 @@ def main(args, ds_init):
                 checkpoint_model['pos_embed'] = new_pos_embed
 
         utils.load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
+
+    # > Yiran added: freeze
+    if hasattr(args, 'freeze_layers') and args.freeze_layers > 0:
+        # > 12 blocks of vit base
+        freeze_blocks = list(range(args.freeze_layers))
+
+        for name, param in model.named_parameters():
+            # > freeze by default
+            param.requires_grad = False
+
+            # > Only unfreeze the last few layers and the head
+            if "head" in name:
+                # > always train the head
+                param.requires_grad = True
+            else:
+                # > check if this block should be trained
+                for block_idx in range(args.freeze_layers, 12): 
+                    if f"blocks.{block_idx}" in name:
+                        param.requires_grad = True
+                        break
+
+        # > print trainable parameters
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"Trainable params: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.2f}%)")
 
     model.to(device)
 
