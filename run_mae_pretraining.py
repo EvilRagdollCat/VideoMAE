@@ -23,7 +23,7 @@ def get_args():
     parser.add_argument('--save_ckpt_freq', default=50, type=int)
 
     # Model parameters
-    # > Yiran added
+    # > added
     parser.add_argument('--dataset_type', default='videomae',
                     choices=['videomae', 'mice_pretrain'])
 
@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument('--decoder_depth', default=4, type=int,
                         help='depth of decoder')
 
-    parser.add_argument('--mask_type', default='tube', choices=['random', 'tube', 'frame_random'], # > Yiran edited "frame_random"
+    parser.add_argument('--mask_type', default='tube', choices=['random', 'tube', 'frame_random'], # > edited "frame_random"
                         type=str, help='masked strategy of video tokens/patches')
 
     parser.add_argument('--mask_ratio', default=0.75, type=float,

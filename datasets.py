@@ -1,5 +1,5 @@
 import os
-import cv2 # > Yiran added
+import cv2 
 from torchvision import transforms
 from transforms import *
 from masking_generator import TubeMaskingGenerator
@@ -25,7 +25,7 @@ class DataAugmentationForVideoMAE(object):
             self.masked_position_generator = TubeMaskingGenerator(
                 args.window_size, args.mask_ratio
             )
-        # > Yiran added: for mice dataset we should use random masking in each frame
+        # > added: for mice dataset we should use random masking in each frame
         elif args.mask_type == 'frame_random':
             def _gen():
                 """
@@ -89,7 +89,7 @@ class DataAugmentationForVideoMAE(object):
 
 
 def build_pretraining_dataset(args):
-    # > Yiran added
+    # > added
     if getattr(args, 'dataset_type', 'videomae') == 'mice_pretrain':
         # use our own dataset
         dataset = MicePretrainDataset(
@@ -270,7 +270,7 @@ def build_dataset(is_train, test_mode, args):
             new_width=320,
             args=args)
         nb_classes = 51
-    # > Yiran added
+    # > added
     elif args.data_set == 'mice_classification':
         if is_train:
             mode = 'train'

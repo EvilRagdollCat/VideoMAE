@@ -17,6 +17,10 @@ from torchvision import transforms
 from transforms import *
 from masking_generator import  TubeMaskingGenerator
 
+from utils_dlc_roi import DLCManager, get_bbox_from_dlc
+import cv2
+
+
 class DataAugmentationForVideoMAE(object):
     def __init__(self, args):
         self.input_mean = [0.485, 0.456, 0.406] # IMAGENET_DEFAULT_MEAN
@@ -33,7 +37,7 @@ class DataAugmentationForVideoMAE(object):
             self.masked_position_generator = TubeMaskingGenerator(
                 args.window_size, args.mask_ratio
             )
-        # > Yiran added: for mice dataset we should use random masking in each frame
+        # > added: for mice dataset we should use random masking in each frame
         elif args.mask_type == 'frame_random':
             def _gen():
                 """
@@ -69,7 +73,7 @@ def get_args():
     parser.add_argument('img_path', type=str, help='input video path')
     parser.add_argument('save_path', type=str, help='save video path')
     parser.add_argument('model_path', type=str, help='checkpoint path of model')
-    parser.add_argument('--mask_type', default='random', choices=['random', 'tube', 'frame_random'], # > Yiran edited "frame_random"
+    parser.add_argument('--mask_type', default='random', choices=['random', 'tube', 'frame_random'], # > edited "frame_random"
                         type=str, help='masked strategy of video tokens/patches')
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)
@@ -87,6 +91,16 @@ def get_args():
                         help='Name of model to vis')
     parser.add_argument('--drop_path', type=float, default=0.0, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
+    # > dlc roi
+    parser.add_argument('--use_dlc_roi', action='store_true',
+                       help='Use DLC ROI cropping')
+    parser.add_argument('--dlc_dir', type=str, default=None,
+                       help='Directory containing DLC files')
+    parser.add_argument('--dlc_likelihood_threshold', type=float, default=0.6)
+    #parser.add_argument('--roi_padding', type=float, default=0.25)
+    parser.add_argument('--roi_margin', type=int, default=30,  # 直接用margin，不用padding
+                       help='Fixed margin around keypoints in pixels')
+    parser.add_argument('--roi_min_size', type=int, default=96)
     
     return parser.parse_args()
 
@@ -124,12 +138,21 @@ def main(args):
     if args.save_path:
         Path(args.save_path).mkdir(parents=True, exist_ok=True)
 
+    dlc_manager = None
+    dlc_df = None
+    if args.use_dlc_roi and args.dlc_dir:
+        dlc_manager = DLCManager(args.dlc_dir)
+        dlc_df = dlc_manager.load_dlc_data(args.img_path)
+        if dlc_df is None:
+            print(f"Warning: No DLC data found for {args.img_path}, using full frame")
+            args.use_dlc_roi = False
+
     with open(args.img_path, 'rb') as f:
         vr = VideoReader(f, ctx=cpu(0))
     duration = len(vr)
-    new_length  = 1 
-    new_step = 1
-    skip_length = new_length * new_step
+    #new_length  = 1 
+    #new_step = 1
+    #skip_length = new_length * new_step
     # frame_id_list = [1, 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61]
 
     
@@ -143,7 +166,43 @@ def main(args):
     #                                             size=args.num_frames)
 
     video_data = vr.get_batch(frame_id_list).asnumpy()
-    print(video_data.shape)
+    print(f"Original video shape: {video_data.shape}") #print(video_data.shape)
+
+    if args.use_dlc_roi and dlc_df is not None:
+        cropped_frames = []
+        for i, frame_idx in enumerate(frame_id_list):
+            frame = video_data[i]
+            H, W = frame.shape[:2]
+
+            # > calculate bbox
+            y1, y2, x1, x2 = get_bbox_from_dlc(
+                dlc_df, frame_idx,
+                likelihood_threshold=args.dlc_likelihood_threshold,
+                margin=args.roi_margin,  # margin instead of padding
+                min_size=args.roi_min_size
+            )
+
+            # > boundary
+            y1 = max(0, min(y1, H-1))
+            y2 = max(y1+1, min(y2, H))
+            x1 = max(0, min(x1, W-1))
+            x2 = max(x1+1, min(x2, W))
+
+            # > crop and resize
+            crop = frame[y1:y2, x1:x2]
+            if crop.size == 0:  # 防止空裁剪
+                print(f"Warning: Empty crop at frame {frame_idx}, using full frame")
+                crop = frame
+
+            crop_resized = cv2.resize(crop, (args.input_size, args.input_size),
+                                     interpolation=cv2.INTER_LINEAR)
+            cropped_frames.append(crop_resized)
+
+        video_data = np.array(cropped_frames)
+        print(f"After DLC ROI cropping: {video_data.shape}")
+
+
+
     img = [Image.fromarray(video_data[vid, :, :, :]).convert('RGB') for vid, _ in enumerate(frame_id_list)]
 
     transforms = DataAugmentationForVideoMAE(args)

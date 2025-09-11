@@ -43,7 +43,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     for data_iter_step, (samples, targets, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
-            continue
+            break #continue
         it = start_steps + step  # global training iteration
         # Update LR & WD for the first acc
         if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % update_freq == 0:
@@ -150,7 +150,7 @@ def validation_one_epoch(data_loader, model, device):
     # switch to evaluation mode
     model.eval()
 
-    # > Yiran added
+    # > added
     acc5_supported = None
 
     for batch in metric_logger.log_every(data_loader, 10, header):
@@ -166,7 +166,7 @@ def validation_one_epoch(data_loader, model, device):
 
         # acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
-        # > Yiran edited
+        # > edited
         if acc5_supported is None:
             acc5_supported = (output.shape[-1] >= 5)
         if acc5_supported:
@@ -198,7 +198,7 @@ def final_test(data_loader, model, device, file):
     # switch to evaluation mode
     model.eval()
     final_result = []
-    # > Yiran added
+    # > added
     acc5_supported = None
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
@@ -223,7 +223,7 @@ def final_test(data_loader, model, device, file):
             final_result.append(string)
 
         # acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        # > Yiran edited
+        # > edited
         if acc5_supported is None:
             acc5_supported = (output.shape[-1] >= 5)
 
@@ -268,7 +268,7 @@ def merge(eval_path, num_tasks):
             chunk_nb = line.split(']')[1].split(' ')[2]
             split_nb = line.split(']')[1].split(' ')[3]
             #data = np.fromstring(line.split('[')[1].split(']')[0], dtype=np.float, sep=',')
-            data = np.fromstring(line.split('[')[1].split(']')[0], dtype=float, sep=',') # > Yiran edited
+            data = np.fromstring(line.split('[')[1].split(']')[0], dtype=float, sep=',') # > edited
             data = softmax(data)
             if not name in dict_feats:
                 dict_feats[name] = []

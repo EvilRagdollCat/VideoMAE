@@ -7,7 +7,7 @@ import utils
 from einops import rearrange
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
-# > Yiran added
+# > added
 from pathlib import Path
 from utils_mask_viz import unnormalize_to_uint8, draw_mask_on_frames, save_grid
 
@@ -38,7 +38,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
         videos = videos.to(device, non_blocking=True)
         bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
 
-        # > Yiran added: masking visualization
+        # > added: masking visualization
         if epoch == 0 and step < 50 and utils.is_main_process():
             try:
                 v0 = videos[0]  # (C,T,H,W)

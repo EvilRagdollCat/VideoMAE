@@ -162,7 +162,7 @@ def get_args():
     parser.add_argument('--no_auto_resume', action='store_false', dest='auto_resume')
     parser.set_defaults(auto_resume=True)
 
-    # > Yiran added
+    # > added
     parser.add_argument('--freeze_layers', type=int, default=0,
                     help='Number of transformer blocks to freeze (0-11 for ViT-Base)')
 
@@ -278,8 +278,8 @@ def main(args, ds_init):
             dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=False)
     else:
         # sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val) if dataset_val is not None else None # > Yiran edited: in case there's no val.csv
-        sampler_test = torch.utils.data.SequentialSampler(dataset_test) # > Yiran added
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val) if dataset_val is not None else None # > edited: in case there's no val.csv
+        sampler_test = torch.utils.data.SequentialSampler(dataset_test) # > added
 
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
@@ -300,6 +300,9 @@ def main(args, ds_init):
         drop_last=True,
         collate_fn=collate_func,
     )
+
+    steps_per_epoch = max(1, len(data_loader_train))
+    num_training_steps_per_epoch = max(1, steps_per_epoch // args.update_freq)
 
     if dataset_val is not None:
         data_loader_val = torch.utils.data.DataLoader(
@@ -359,7 +362,7 @@ def main(args, ds_init):
                 args.finetune, map_location='cpu', check_hash=True)
         else:
             # checkpoint = torch.load(args.finetune, map_location='cpu')
-            try: # > Yiran edited
+            try: # > edited
                 checkpoint = torch.load(args.finetune, map_location='cpu', weights_only=False)
             except TypeError:
                 # for older torch that doesn't have weights_only arg
@@ -421,7 +424,7 @@ def main(args, ds_init):
 
         utils.load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
 
-    # > Yiran added: freeze
+    # > added: freeze
     if hasattr(args, 'freeze_layers') and args.freeze_layers > 0:
         # > 12 blocks of vit base
         freeze_blocks = list(range(args.freeze_layers))
@@ -464,14 +467,15 @@ def main(args, ds_init):
     print('number of params:', n_parameters)
 
     total_batch_size = args.batch_size * args.update_freq * utils.get_world_size()
-    num_training_steps_per_epoch = len(dataset_train) // total_batch_size
+    #num_training_steps_per_epoch = len(dataset_train) // total_batch_size
     args.lr = args.lr * total_batch_size / 256
     args.min_lr = args.min_lr * total_batch_size / 256
     args.warmup_lr = args.warmup_lr * total_batch_size / 256
     print("LR = %.8f" % args.lr)
     print("Batch size = %d" % total_batch_size)
     print("Update frequent = %d" % args.update_freq)
-    print("Number of training examples = %d" % len(dataset_train))
+    #print("Number of training examples = %d" % len(dataset_train))
+    print("Number of training batches per epoch = %d" % steps_per_epoch)
     print("Number of training training per epoch = %d" % num_training_steps_per_epoch)
 
     num_layers = model_without_ddp.get_num_layers()
@@ -537,7 +541,7 @@ def main(args, ds_init):
     if args.eval:
         preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
         test_stats = final_test(data_loader_test, model, device, preds_file)
-        if args.distributed: # > Yiran added: i dont have distributed computation
+        if args.distributed: # > added: i dont have distributed computation
             torch.distributed.barrier()
         if global_rank == 0:
             print("Start merging results...")
@@ -603,7 +607,7 @@ def main(args, ds_init):
 
     preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
     test_stats = final_test(data_loader_test, model, device, preds_file)
-    if args.distributed: # > Yiran added:I dont have distributed computation
+    if args.distributed: # > added:I dont have distributed computation
         torch.distributed.barrier()
     if global_rank == 0:
         print("Start merging results...")
