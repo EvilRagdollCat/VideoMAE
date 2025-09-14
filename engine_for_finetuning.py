@@ -9,6 +9,78 @@ from timm.utils import accuracy, ModelEma
 import utils
 from scipy.special import softmax
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
+from scipy.spatial.distance import pdist, squareform
+
+
+def visualize_embeddings(embeddings_list, labels_list)
+    
+    # > combine all 
+    embeddings = np.concatenate(embeddings_list, axis=0)
+    labels = np.concatenate(labels_list, axis=0)
+    
+    print(f"\n[Embedding Visualization]")
+    print(f"  Total samples: {len(embeddings)}")
+    print(f"  Embedding dim: {embeddings.shape[1]}")
+    
+    # > PCA 50dims
+    if embeddings.shape[1] > 50:
+        pca = PCA(n_components=50)
+        embeddings_pca = pca.fit_transform(embeddings)
+        print(f"  PCA explained variance: {pca.explained_variance_ratio_[:5]}")
+    else:
+        embeddings_pca = embeddings
+    
+    # > t-SNE 2D
+    tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(embeddings)-1))
+    embeddings_2d = tsne.fit_transform(embeddings_pca)
+    
+    # > plot
+    plt.figure(figsize=(10, 8))
+    for label in np.unique(labels):
+        mask = labels == label
+        plt.scatter(embeddings_2d[mask, 0], embeddings_2d[mask, 1], 
+                   label=f'Class {label}', alpha=0.6, s=50)
+    
+    plt.legend()
+    plt.title('t-SNE Visualization of Embeddings')
+    plt.xlabel('t-SNE 1')
+    plt.ylabel('t-SNE 2')
+    
+    os.makedirs('/data/videomae_outputs/test_embeddings/', exist_ok=True)
+    plt.savefig('/data/videomae_outputs/test_embeddings/embeddings_tsne.png', dpi=150)
+    plt.close()
+    print(f"  Saved to /data/videomae_outputs/test_embeddings/embeddings_tsne.png")
+
+def analyze_embedding_quality(embeddings, labels):
+    
+    # > silhouette score
+    if len(np.unique(labels)) > 1:
+        silhouette = silhouette_score(embeddings, labels)
+        print(f"  Silhouette Score: {silhouette:.4f} (higher is better, range: -1 to 1)")
+    
+    # > calculate the distance within the class and between classes
+    distances = squareform(pdist(embeddings, 'euclidean'))
+    
+    for label in np.unique(labels):
+        mask = labels == label
+        if mask.sum() > 0:  # make sure the class is not empty
+            intra_distances = distances[mask][:, mask]
+            if intra_distances.shape[0] > 1:
+                intra_class = intra_distances[np.triu_indices_from(intra_distances, k=1)].mean()
+            else:
+                intra_class = 0
+            
+            if (~mask).sum() > 0:  # make sure other classes are not empty
+                inter_class = distances[mask][:, ~mask].mean()
+                ratio = inter_class/intra_class if intra_class > 0 else float('inf')
+                print(f"  Class {label}: Intra-dist={intra_class:.4f}, Inter-dist={inter_class:.4f}, Ratio={ratio:.4f}")
+
 
 def train_class_batch(model, samples, target, criterion):
     outputs = model(samples)
@@ -33,6 +105,13 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
+
+    # > debug: visualize and analyze the embeddings during training
+    collect_embeddings = (epoch % 1 == 0)  # > every epoch
+    if collect_embeddings:
+        train_embeddings = []
+        train_labels = []
+
 
     if loss_scaler is None:
         model.zero_grad()
@@ -71,7 +150,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         loss_value = loss.item()
 
         # > debug: get the features from training
-        if data_iter_step == 0:  # 每个epoch的第一个batch
+        if data_iter_step == 0: 
             with torch.no_grad():
                 # > get features
                 samples_float = samples.float() if samples.dtype == torch.float16 else samples
@@ -108,6 +187,22 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 for name, param in model.named_parameters():
                     if param.requires_grad and "head" in name:
                         print(f"  {name}: shape={param.shape}, requires_grad={param.requires_grad}")
+
+        # > collect embeddings
+        if collect_embeddings and data_iter_step % 5 == 0:  # every 5 bathces
+            with torch.no_grad():
+                samples_float = samples.float() if samples.dtype == torch.float16 else samples
+                if hasattr(model, 'module'):
+                    features = model.module.forward_features(samples_float)
+                else:
+                    features = model.forward_features(samples_float)
+                
+                train_embeddings.append(features.cpu().numpy())
+                if mixup_fn is None:
+                    train_labels.append(targets.cpu().numpy())
+                else:
+                    # when mixed up, use the argmax of the original label
+                    train_labels.append(targets.argmax(dim=1).cpu().numpy())
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -202,6 +297,23 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
+
+
+    
+    if collect_embeddings and train_embeddings:
+        import numpy as np
+        all_features = np.concatenate(train_embeddings)
+        all_labels = np.concatenate(train_labels)
+
+        print(f"\n[Training Embeddings Analysis - Epoch {epoch}]")
+        analyze_embedding_quality(all_features, all_labels)
+
+        # > visualize
+        try:
+            visualize_embeddings_with_name(train_embeddings, train_labels,
+                                          f'/data/videomae_outputs/train_embeddings/train_embeddings_epoch{epoch}.png')
+        except Exception as e:
+            print(f"Could not visualize: {e}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
@@ -326,6 +438,34 @@ def final_test(data_loader, model, device, file):
                                                 str(int(chunk_nb[i].cpu().numpy())), \
                                                 str(int(split_nb[i].cpu().numpy())))
             final_result.append(string)
+    
+
+        if all_embeddings:
+            import numpy as np
+            features_all = np.concatenate(all_embeddings)
+            labels_all = np.concatenate(all_labels)
+
+            print(f"\n[Final Feature Analysis - All Test Data]")
+            print(f"  Total samples: {len(features_all)}")
+            print(f"  Feature dimension: {features_all.shape[1]}")
+            print(f"  Average feature std across dims: {features_all.std(axis=0).mean():.6f}")
+
+            if features_all.std(axis=0).mean() < 0.01:
+                print("  WARNING: Features have very low variance. model may not be learning")
+            analyze_embedding_quality(features_all, labels_all)
+            try:
+                visualize_embeddings(all_embeddings, all_labels)
+            except Exception as e:
+                print(f"  Could not create visualization: {e}")
+
+            # > save embeddings
+            os.makedirs('/data/videomae_outputs/test_embeddings', exist_ok=True)
+            np.savez('/data/videomae_outputs/test_embeddings/test_embeddings.npz',
+                    embeddings=features_all,
+                    labels=labels_all)
+            print("  Saved embeddings to /data/videomae_outputs/test_embeddings/test_embeddings.npz")
+
+
 
         # acc1, acc5 = accuracy(output, target, topk=(1, 5))
         # > edited
