@@ -265,7 +265,14 @@ def final_test(data_loader, model, device, file):
     final_result = []
     # > added
     acc5_supported = None
-    for batch in metric_logger.log_every(data_loader, 10, header):
+
+    # > DEBUG: collect embeddings
+    all_embeddings = []
+    all_labels = []
+    debug_printed = False
+
+    #for batch in metric_logger.log_every(data_loader, 10, header):
+    for batch_idx, batch in enumerate(metric_logger.log_every(data_loader, 10, header)):
         videos = batch[0]
         target = batch[1]
         ids = batch[2]
@@ -274,10 +281,43 @@ def final_test(data_loader, model, device, file):
         videos = videos.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 
+
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(videos)
+            # > get features and outputs
+            features = model.forward_features(videos)  # [B, 768]
+            #output = model(videos)
+            output = model.head(model.fc_dropout(features))
             loss = criterion(output, target)
+
+        # > DEBUG: save all embeddings and all labels
+        all_embeddings.append(features.cpu().numpy())
+        all_labels.append(target.cpu().numpy())
+
+        # > print detailed analysis
+        if not debug_printed:
+            print(f"\n[TEST - Embeddings Analysis]")
+            print(f"  Features shape: {features.shape}")
+            print(f"  Features stats: mean={features.mean():.4f}, std={features.std():.4f}")
+            print(f"  Features range: [{features.min():.4f}, {features.max():.4f}]")
+
+            # > Similarity
+            from torch.nn.functional import cosine_similarity
+            for i in range(min(4, len(target))):
+                for j in range(i+1, min(4, len(target))):
+                    sim = cosine_similarity(features[i:i+1], features[j:j+1])
+                    same_class = (target[i] == target[j]).item()
+                    print(f"  Sim({i},{j}): {sim.item():.4f} | Same class: {same_class}")
+
+            # > variance
+            with torch.no_grad():
+                batch_std = features.std(dim=0)
+                active_dims = (batch_std > 0.01).sum().item()
+                print(f"  Active dimensions: {active_dims}/{features.shape[1]} ({active_dims/features.shape[1]*100:.1f}%)")
+
+            debug_printed = True
+
+
 
         for i in range(output.size(0)):
             string = "{} {} {} {} {}\n".format(ids[i], \
@@ -313,6 +353,26 @@ def final_test(data_loader, model, device, file):
     metric_logger.synchronize_between_processes()
     print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
           .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+
+    # > analyze all embeddings after testing
+    if all_embeddings:
+        import numpy as np
+        features_all = np.concatenate(all_embeddings)
+        labels_all = np.concatenate(all_labels)
+
+        print(f"\n[Final Feature Analysis - All Test Data]")
+        print(f"  Total samples: {len(features_all)}")
+        print(f"  Feature dimension: {features_all.shape[1]}")
+        print(f"  Average feature std across dims: {features_all.std(axis=0).mean():.6f}")
+
+        if features_all.std(axis=0).mean() < 0.01:
+            print(" WARNING: Features have very low variance. model may not be learning")
+
+        # > save embeddings
+        np.savez('/data/videomae_outputs/test_embeddings/test_embeddings.npz',
+                 embeddings=features_all,
+                 labels=labels_all)
+        print("  Saved embeddings to /data/videomae_outputs/test_embeddings/test_embeddings.npz")
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
