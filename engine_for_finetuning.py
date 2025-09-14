@@ -70,6 +70,45 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         loss_value = loss.item()
 
+        # > debug: get the features from training
+        if data_iter_step == 0:  # 每个epoch的第一个batch
+            with torch.no_grad():
+                # > get features
+                samples_float = samples.float() if samples.dtype == torch.float16 else samples
+                if hasattr(model, 'module'):  # DistributedDataParallel
+                    features = model.module.forward_features(samples_float)
+                else:
+                    features = model.forward_features(samples_float)
+
+            print(f"\n[EPOCH {epoch} DEBUG]")
+            print(f"  Batch shape: {samples.shape}")
+            print(f"  Output shape: {output.shape}")
+            print(f"  Output values: {output[:4].detach().cpu()}")
+            print(f"  Predictions: {output.argmax(dim=1)[:4].detach().cpu()}")
+
+            # > in case there's mixup
+            if mixup_fn is None:
+                print(f"  True labels: {targets[:4].cpu()}")
+            else:
+                print(f"  Mixed targets shape: {targets.shape}")
+
+            print(f"  Loss: {loss_value:.4f}")
+            print(f"  Feature stats: mean={features.mean().item():.4f}, std={features.std().item():.4f}")
+
+            # > check output difference
+            if len(output) > 1:
+                output_diff = (output[0] - output[1:]).abs().max().item()
+                print(f"  Max output difference: {output_diff:.6f}")
+                if output_diff < 1e-5:
+                    print("  ⚠️ WARNING: All outputs are nearly identical!")
+
+            # > check gradient after back propogation
+            if data_iter_step == 0 and epoch == 0:
+                print("\n[Gradient Check]")
+                for name, param in model.named_parameters():
+                    if param.requires_grad and "head" in name:
+                        print(f"  {name}: shape={param.shape}, requires_grad={param.requires_grad}")
+
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
@@ -93,6 +132,32 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_norm = loss_scaler(loss, optimizer, clip_grad=max_norm,
                                     parameters=model.parameters(), create_graph=is_second_order,
                                     update_grad=(data_iter_step + 1) % update_freq == 0)
+
+            # > debug: check gradient after back propogation
+            if data_iter_step == 0 and (data_iter_step + 1) % update_freq == 0:
+                print("\n[Gradient Analysis - Epoch {}]".format(epoch))
+                for name, param in model.named_parameters():
+                    if param.requires_grad and param.grad is not None:
+                        grad_norm_val = param.grad.data.norm(2).item()
+                        if grad_norm_val == 0:
+                            print(f"Zero gradient: {name}")
+                        elif grad_norm_val > 100:
+                            print(f"Large gradient: {name} = {grad_norm_val:.2f}")
+                        elif "head" in name or "fc_norm" in name: # print the grad_norm of important layers
+                            print(f"  {name}: grad_norm = {grad_norm_val:.4f}")
+
+                # > get total norm
+                total_norm = 0
+                param_count = 0
+                for p in model.parameters():
+                    if p.grad is not None:
+                        total_norm += p.grad.data.norm(2).item() ** 2
+                        param_count += 1
+                total_norm = total_norm ** 0.5
+                print(f"  Total gradient norm: {total_norm:.4f}")
+                print(f"  Parameters with gradients: {param_count}")
+
+
             if (data_iter_step + 1) % update_freq == 0:
                 optimizer.zero_grad()
                 if model_ema is not None:

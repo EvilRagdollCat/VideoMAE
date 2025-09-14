@@ -1,20 +1,33 @@
+"""
+Changed the way of reading dlc roi data
+"""
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Tuple, List, Optional, Dict
+import cv2
+
 
 def load_dlc_tracking(dlc_path: str) -> pd.DataFrame:
     """
-    Load DeepLabCut tracking data
+    Load DeepLabCut tracking data with multi-level column index
     """
+    # > convert string path to "Path" type
     dlc_path = Path(dlc_path)
     
     if dlc_path.suffix == '.csv':
         # > read .csv file without the headers
+        # DLC CSV has 3 header rows: scorer, bodyparts, coords
+        # This creates MultiIndex columns: (bodypart, coordinate)
         df = pd.read_csv(dlc_path, header=[1, 2], index_col=0)
+        # read header[1, 2] as labels: row1 bodyparts, row2 (x, y, likelihood)
+        # creates multiindex column structure
+        # index_col = 0: uses the 0th col as the index
+        # dataframe structure: df['nosetip']['x'].iloc[0] is the xcoord of nosetip in the 0th frame
         return df
     elif dlc_path.suffix in ['.h5', '.hdf5']:
-        df = pd.read_hdf(dlc_path)
+        # > if reads .h5
+        df = pd.read_hdf(dlc_path) # read directly
         return df
     else:
         raise ValueError(f"Unsupported format: {dlc_path.suffix}")
@@ -74,28 +87,52 @@ def get_bbox_from_dlc(dlc_df: pd.DataFrame,
                       padding: float = 0.2,
                       min_size: int = 1,
                       margin: int = 15,
+                      max_bodyparts: int = None,  # Use None for all, or limit
                       video_path: Path = None) -> Tuple[int, int, int, int]:
     """
-    bbox calculation from DLC repo. but with only first 7 keypoints being paid attention to
+    Calculate bounding box from DLC tracking data with multi-level index
     """
     if frame_idx >= len(dlc_df):
         frame_idx = len(dlc_df) - 1
     all_x, all_y = [], []
-    row = dlc_df.iloc[frame_idx]
-    
-        
-    for i in range(0, len(row), 3):
-        if i+2 < len(row):
-            x, y, likelihood = row.iloc[i], row.iloc[i+1], row.iloc[i+2]
-                
-            if likelihood > likelihood_threshold and not np.isnan(x):
+
+    # > Get bodypart names from the first level of column index
+    bodyparts = dlc_df.columns.get_level_values(0).unique()
+
+
+    # > Optionally limit the number of bodyparts used
+    if max_bodyparts is not None:
+        bodyparts = bodyparts[:min(max_bodyparts, len(bodyparts))]
+
+    # > Debug: print structure on first call
+    if not hasattr(get_bbox_from_dlc, '_structure_printed'):
+        # hasattr(object, attribute_name): checks if an object has a certain attribute
+        # first time called: no such attribute, returns false (in this case will then print bodyparts), add this attribute
+        # next time called: attribute added, reurns true (in this case will skip)
+
+        print(f"\n[DLC Structure] Bodyparts found: {list(bodyparts)}")
+        get_bbox_from_dlc._structure_printed = True
+
+    for bodypart in bodyparts:
+        try: # for external data
+            # > access multi-level indexed data
+            x = dlc_df[bodypart]['x'].iloc[frame_idx]
+            y = dlc_df[bodypart]['y'].iloc[frame_idx]
+            likelihood = dlc_df[bodypart]['likelihood'].iloc[frame_idx]
+
+            # > check validity
+            if not np.isnan(x) and not np.isnan(y) and likelihood > likelihood_threshold:
                 all_x.append(x)
                 all_y.append(y)
+        except (KeyError, IndexError) as e:
+            # > skip if bodypart doesn't exist or other access errors
+            continue
     
+    # > if no valid points found, return default bbox
     if not all_x:
         return (0, min_size, 0, min_size)
     
-    # > calculate dlc roi
+    # > calculate dlc roi to include all the keypoints in this frame
     x_min = int(np.floor(min(all_x))) - margin  # smaller margin
     x_max = int(np.ceil(max(all_x))) + margin
     y_min = int(np.floor(min(all_y))) - margin
@@ -104,6 +141,17 @@ def get_bbox_from_dlc(dlc_df: pd.DataFrame,
     # > maske sure it's in the bbox
     x_min = max(0, x_min)
     y_min = max(0, y_min)
+
+    # > ensure minimum size
+    # find the center and expand x/y by min_size
+    if (x_max - x_min) < min_size:
+        center = (x_max + x_min) // 2
+        x_min = max(0, center - min_size // 2)
+        x_max = x_min + min_size
+    if (y_max - y_min) < min_size:
+        center = (y_min + y_max) // 2
+        y_min = max(0, center - min_size // 2)
+        y_max = y_min + min_size
     
     return (int(y_min), int(y_max), int(x_min), int(x_max))
 

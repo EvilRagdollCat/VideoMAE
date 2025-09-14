@@ -9,20 +9,25 @@ from decord import VideoReader, cpu
 # > import dlc tools
 from utils_dlc_roi import DLCManager, get_bbox_from_dlc
 
-# ImageNet normalization
+# ImageNet normalization, normalize 3 channels of RGB
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 def _uniform_sample_indices(num_frames, total, sampling_rate, dlc_df=None, sample_range=0.3): # > focus on the first 5 minutes and skip when there's no mouse
     """
     Uniformaly sample the indices, skipping frames where DLC tracking is invalid (-1)
+    
+    num_frames: number of frames needed to be sampled
+    total: total number of frames in the vid
+    dlc_df: deeplabcut data
+    sample_range: the range of sampling (30% by default)
     """
-    span = (num_frames - 1) * sampling_rate + 1
+    span = (num_frames - 1) * sampling_rate + 1 # the span of sampling
     # > Find first valid frame if DLC data available
-    start_min = 0
+    start_min = 0 # minimum start frame
     if dlc_df is not None:
         # > Find first frame where mouse is detected (not -1)
-        for i in range(len(dlc_df)):
+        for i in range(len(dlc_df)): # > loop over all the dlc data of each frame
             row = dlc_df.iloc[i]
             # > Check if any keypoint has valid coordinates (not -1)
             has_valid = False
@@ -408,6 +413,24 @@ class MiceClassificationDataset(Dataset):
                 vid = _read_clip_full_frame(
                     p, self.num_frames, self.sampling_rate, self.input_size
                 )
+
+            # Save visualization every 10 samples
+            if idx % 10 == 0:
+                import torchvision
+                import os
+                os.makedirs("debug_crops", exist_ok=True)
+
+                # Denormalize
+                sample = vid.clone()
+                for c in range(3):
+                    sample[c] = sample[c] * IMAGENET_STD[c] + IMAGENET_MEAN[c]
+
+                # Save first frame
+                torchvision.utils.save_image(
+                    sample[:, 0, :, :],
+                    f"/data/videomae_outputs/debug_crops/debug_input_{idx:04d}_label{label}_{'dlc' if use_roi else 'full'}.png"
+                )
+                print(f"Saved debug image for idx {idx}, label {label}, {'DLC crop' if use_roi else 'full frame'}")
             
             if self.mode == "test":
                 return (vid, label, 

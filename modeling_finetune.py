@@ -281,6 +281,36 @@ class VisionTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
+
+        # > print the features every 10 batches
+        if hasattr(self, 'forward_count'):
+            self.forward_count += 1
+        else:
+            self.forward_count = 0
+        if self.forward_count % 100 == 0:
+            print(f"\n[DEBUG] Feature stats before head:")
+            print(f"  Shape: {x.shape}")
+            print(f"  Mean: {x.mean().item():.4f}")
+            print(f"  Std: {x.std().item():.4f}")
+            print(f"  Min: {x.min().item():.4f}")
+            print(f"  Max: {x.max().item():.4f}")
+
+            # > compute active dimensions
+            with torch.no_grad():
+                batch_std = x.std(dim=0)
+                active_dims = (batch_std > 0.01).sum().item()
+                print(f"  Active dimensions: {active_dims}/{x.shape[1]} ({active_dims/x.shape[1]*100:.1f}%)")
+
+            # > check variance
+            if x.std().item() < 0.01:
+                print("   WARNING: Features have very low variance")
+
+            # > check the similarity of the features from different samples
+            if x.shape[0] > 1:
+                feature_sim = torch.nn.functional.cosine_similarity(x[0:1], x[1:2])
+                print(f"  Cosine similarity between first two samples: {feature_sim.item():.4f}")
+
+
         x = self.head(self.fc_dropout(x))
         return x
 
