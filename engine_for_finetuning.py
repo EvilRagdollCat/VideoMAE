@@ -18,8 +18,11 @@ from sklearn.metrics import silhouette_score
 from scipy.spatial.distance import pdist, squareform
 
 
-def visualize_embeddings(embeddings_list, labels_list)
-    
+#def visualize_embeddings(embeddings_list, labels_list):
+def visualize_embeddings(embeddings_list, labels_list, save_path=None):
+
+    if save_path is None:
+        save_path = '/data/videomae_outputs/test_embeddings/embeddings_tsne.png'
     # > combine all 
     embeddings = np.concatenate(embeddings_list, axis=0)
     labels = np.concatenate(labels_list, axis=0)
@@ -52,10 +55,10 @@ def visualize_embeddings(embeddings_list, labels_list)
     plt.xlabel('t-SNE 1')
     plt.ylabel('t-SNE 2')
     
-    os.makedirs('/data/videomae_outputs/test_embeddings/', exist_ok=True)
-    plt.savefig('/data/videomae_outputs/test_embeddings/embeddings_tsne.png', dpi=150)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"  Saved to /data/videomae_outputs/test_embeddings/embeddings_tsne.png")
+    print(f"  Saved to {save_path}")
 
 def analyze_embedding_quality(embeddings, labels):
     
@@ -438,32 +441,6 @@ def final_test(data_loader, model, device, file):
                                                 str(int(chunk_nb[i].cpu().numpy())), \
                                                 str(int(split_nb[i].cpu().numpy())))
             final_result.append(string)
-    
-
-        if all_embeddings:
-            import numpy as np
-            features_all = np.concatenate(all_embeddings)
-            labels_all = np.concatenate(all_labels)
-
-            print(f"\n[Final Feature Analysis - All Test Data]")
-            print(f"  Total samples: {len(features_all)}")
-            print(f"  Feature dimension: {features_all.shape[1]}")
-            print(f"  Average feature std across dims: {features_all.std(axis=0).mean():.6f}")
-
-            if features_all.std(axis=0).mean() < 0.01:
-                print("  WARNING: Features have very low variance. model may not be learning")
-            analyze_embedding_quality(features_all, labels_all)
-            try:
-                visualize_embeddings(all_embeddings, all_labels)
-            except Exception as e:
-                print(f"  Could not create visualization: {e}")
-
-            # > save embeddings
-            os.makedirs('/data/videomae_outputs/test_embeddings', exist_ok=True)
-            np.savez('/data/videomae_outputs/test_embeddings/test_embeddings.npz',
-                    embeddings=features_all,
-                    labels=labels_all)
-            print("  Saved embeddings to /data/videomae_outputs/test_embeddings/test_embeddings.npz")
 
 
 
