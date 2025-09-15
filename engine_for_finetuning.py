@@ -313,7 +313,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # > visualize
         try:
-            visualize_embeddings_with_name(train_embeddings, train_labels,
+            visualize_embeddings(train_embeddings, train_labels,
                                           f'/data/videomae_outputs/train_embeddings/train_embeddings_epoch{epoch}.png')
         except Exception as e:
             print(f"Could not visualize: {e}")
@@ -484,6 +484,9 @@ def final_test(data_loader, model, device, file):
 
         if features_all.std(axis=0).mean() < 0.01:
             print(" WARNING: Features have very low variance. model may not be learning")
+
+        analyze_embedding_quality(features_all, labels_all)
+        visualize_embeddings(all_embeddings, all_labels)
 
         # > save embeddings
         np.savez('/data/videomae_outputs/test_embeddings/test_embeddings.npz',
