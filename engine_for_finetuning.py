@@ -30,18 +30,31 @@ def visualize_embeddings(embeddings_list, labels_list, save_path=None):
     print(f"\n[Embedding Visualization]")
     print(f"  Total samples: {len(embeddings)}")
     print(f"  Embedding dim: {embeddings.shape[1]}")
+
+    if len(embeddings) <= 3:
+        print("  Too few samples for visualization")
+        return
     
     # > PCA 50dims
-    if embeddings.shape[1] > 50:
+    #if embeddings.shape[1] > 50:
+    if embeddings.shape[1] > 50 and len(embeddings) > 50:
         pca = PCA(n_components=50)
         embeddings_pca = pca.fit_transform(embeddings)
         print(f"  PCA explained variance: {pca.explained_variance_ratio_[:5]}")
+    elif len(embeddings) < embeddings.shape[1]:
+        # > When the number of samples is less than the feature dimension, use the number of samples minus 1 as the number of components
+        pca = PCA(n_components=min(len(embeddings)-1, 50))
+        embeddings_pca = pca.fit_transform(embeddings)
     else:
         embeddings_pca = embeddings
     
-    # > t-SNE 2D
-    tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(embeddings)-1))
-    embeddings_2d = tsne.fit_transform(embeddings_pca)
+    # > t-SNE 2D (only when num_sample > 3)
+    #tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(embeddings)-1))
+    #embeddings_2d = tsne.fit_transform(embeddings_pca)
+    if len(embeddings) > 3:
+        perplexity = min(5, len(embeddings)-1)
+        tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity)
+        embeddings_2d = tsne.fit_transform(embeddings_pca)
     
     # > plot
     plt.figure(figsize=(10, 8))
@@ -88,6 +101,13 @@ def analyze_embedding_quality(embeddings, labels):
 def train_class_batch(model, samples, target, criterion):
     outputs = model(samples)
     loss = criterion(outputs, target)
+
+    print(f"Loss value: {loss.item()}")
+    if torch.isnan(loss):
+        print("Loss is NaN!")
+        print(f"Outputs: {outputs}")
+        print(f"Targets: {target}")
+
     return loss, outputs
 
 
@@ -146,9 +166,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             loss, output = train_class_batch(
                 model, samples, targets, criterion)
         else:
-            with torch.cuda.amp.autocast():
-                loss, output = train_class_batch(
-                    model, samples, targets, criterion)
+            #with torch.cuda.amp.autocast():
+            loss, output = train_class_batch(
+                model, samples, targets, criterion)
 
         loss_value = loss.item()
 
@@ -211,6 +231,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
 
+        if torch.isnan(loss):
+            print(f"Loss is nan before backward")
+            print(f"Output values: {output}")
+            print(f"Target values: {targets}")
+
         if loss_scaler is None:
             loss /= update_freq
             model.backward(loss)
@@ -230,6 +255,19 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_norm = loss_scaler(loss, optimizer, clip_grad=max_norm,
                                     parameters=model.parameters(), create_graph=is_second_order,
                                     update_grad=(data_iter_step + 1) % update_freq == 0)
+            if grad_norm is None or (isinstance(grad_norm, float) and math.isnan(grad_norm)):
+                print(f"grad_norm is NaN or None: {grad_norm}")
+                print(f"Loss scale: {loss_scaler.state_dict()['scale']}")
+            # > which layer yielded grad_norm = nan
+            if (data_iter_step + 1) % update_freq == 0:  # > check only when it's updated
+                for name, param in model.named_parameters():
+                    if param.grad is not None:
+                        if torch.isnan(param.grad).any():
+                            print(f"NaN gradient in {name}")
+                            print(f"  Param stats: mean={param.mean():.6f}, std={param.std():.6f}")
+                            print(f"  Grad max: {param.grad.max()}, min: {param.grad.min()}")
+                            # > print first few grads
+                            print(f"  First few grads: {param.grad.flatten()[:10]}")
 
             # > debug: check gradient after back propogation
             if data_iter_step == 0 and (data_iter_step + 1) % update_freq == 0:
@@ -340,9 +378,9 @@ def validation_one_epoch(data_loader, model, device):
         target = target.to(device, non_blocking=True)
 
         # compute output
-        with torch.cuda.amp.autocast():
-            output = model(videos)
-            loss = criterion(output, target)
+        #with torch.cuda.amp.autocast():
+        output = model(videos)
+        loss = criterion(output, target)
 
         # acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
@@ -398,12 +436,12 @@ def final_test(data_loader, model, device, file):
 
 
         # compute output
-        with torch.cuda.amp.autocast():
-            # > get features and outputs
-            features = model.forward_features(videos)  # [B, 768]
-            #output = model(videos)
-            output = model.head(model.fc_dropout(features))
-            loss = criterion(output, target)
+        #with torch.cuda.amp.autocast():
+        # > get features and outputs
+        features = model.forward_features(videos)  # [B, 768]
+        #output = model(videos)
+        output = model.head(model.fc_dropout(features))
+        loss = criterion(output, target)
 
         # > DEBUG: save all embeddings and all labels
         all_embeddings.append(features.cpu().numpy())
