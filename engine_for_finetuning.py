@@ -181,6 +181,17 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     features = model.module.forward_features(samples_float)
                 else:
                     features = model.forward_features(samples_float)
+                # Feature collapse metrics
+                import torch.nn.functional as F
+                feature_std = features.std(dim=0).mean()
+                feat_norm = F.normalize(features, p=2, dim=1)
+                similarity_matrix = torch.mm(feat_norm, feat_norm.t())
+                avg_similarity = similarity_matrix[~torch.eye(len(features), dtype=bool, device=features.device)].mean()
+
+                print(f"\n[FEATURE COLLAPSE CHECK - Step {data_iter_step}]")
+                print(f"  Feature std: {feature_std:.6f} (healthy >0.1, collapsed <0.01)")
+                print(f"  Avg pairwise similarity: {avg_similarity:.4f} (>0.95 = collapsed)")
+                print(f"  Unique predictions: {len(output.argmax(dim=1).unique())}/{len(output)}")
 
             print(f"\n[EPOCH {epoch} DEBUG]")
             print(f"  Batch shape: {samples.shape}")
@@ -258,6 +269,20 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if grad_norm is None or (isinstance(grad_norm, float) and math.isnan(grad_norm)):
                 print(f"grad_norm is NaN or None: {grad_norm}")
                 print(f"Loss scale: {loss_scaler.state_dict()['scale']}")
+
+                if grad_norm is None:
+                    print(f"[GRAD NONE DEBUG]")
+                    print(f"  Grad skipped. Loss scale: {loss_scaler.state_dict()['scale']}")
+                    print(f"  Loss value: {loss_value}")
+                    print(f"  Is loss finite: {torch.isfinite(torch.tensor(loss_value)).item()}")
+                    print(f"  Update freq: {update_freq}, data_iter_step: {data_iter_step}")
+                    print(f"  Should update: {(data_iter_step + 1) % update_freq == 0}")
+
+                    if not hasattr(train_one_epoch, 'grad_none_count'):
+                        train_one_epoch.grad_none_count = 0
+                    train_one_epoch.grad_none_count += 1
+                    print(f"  Total grad_none occurrences: {train_one_epoch.grad_none_count}")
+
             # > which layer yielded grad_norm = nan
             if (data_iter_step + 1) % update_freq == 0:  # > check only when it's updated
                 for name, param in model.named_parameters():
@@ -292,6 +317,23 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 total_norm = total_norm ** 0.5
                 print(f"  Total gradient norm: {total_norm:.4f}")
                 print(f"  Parameters with gradients: {param_count}")
+
+                # > dead layer check
+                dead_layers = []
+                zero_grad_layers = []
+                for name, param in model.named_parameters():
+                    if param.requires_grad and param.grad is not None:
+                        grad_magnitude = param.grad.abs().mean().item()
+                        if grad_magnitude < 1e-8:
+                            dead_layers.append(name)
+                        if grad_magnitude == 0:
+                            zero_grad_layers.append(name)
+
+                if dead_layers:
+                    print(f"\n[DEAD LAYERS]: {len(dead_layers)}/{sum(p.requires_grad for p in model.parameters())}")
+                    print(f"  First 5: {dead_layers[:5]}")
+                if zero_grad_layers:
+                    print(f"  Zero gradient layers: {len(zero_grad_layers)}")
 
 
             if (data_iter_step + 1) % update_freq == 0:

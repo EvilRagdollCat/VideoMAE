@@ -623,6 +623,25 @@ def main(args, ds_init):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    if args.data_set == 'mice_classification':
+    print("\n" + "="*70)
+    print("VIDEOMAE SUMMARY ON MICE DATASET")
+    print("="*70)
+    print(f"Dataset size: {len(dataset_train)} train, {len(dataset_test)} test")
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
+    print(f"Trainable parameters: {n_parameters/1e6:.1f}M")
+    print(f"Final accuracy: {final_top1:.1f}% (random baseline: {100/args.nb_classes:.1f}%)")
+
+    
+    with torch.no_grad():
+        sample_batch = next(iter(data_loader_test))
+        test_features = model.forward_features(sample_batch[0][:8].to(device))
+        final_feature_std = test_features.std(dim=0).mean().item()
+        print(f"Final feature std: {final_feature_std:.6f} (collapsed if <0.01)")
+
+    print(f"Improvement over random: {final_top1 - 100/args.nb_classes:.1f}%")
+    print("Conclusion: Model failed to learn meaningful representations" if final_top1 < 60 else "Model learned something")
+    print("="*70)
 
 
 if __name__ == '__main__':
