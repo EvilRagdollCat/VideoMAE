@@ -624,13 +624,13 @@ def main(args, ds_init):
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
     if args.data_set == 'mice_classification':
-    print("\n" + "="*70)
-    print("VIDEOMAE SUMMARY ON MICE DATASET")
-    print("="*70)
-    print(f"Dataset size: {len(dataset_train)} train, {len(dataset_test)} test")
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
-    print(f"Trainable parameters: {n_parameters/1e6:.1f}M")
-    print(f"Final accuracy: {final_top1:.1f}% (random baseline: {100/args.nb_classes:.1f}%)")
+        print("\n" + "="*70)
+        print("VIDEOMAE SUMMARY ON MICE DATASET")
+        print("="*70)
+        print(f"Dataset size: {len(dataset_train)} train, {len(dataset_test)} test")
+        print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
+        print(f"Trainable parameters: {n_parameters/1e6:.1f}M")
+        print(f"Final accuracy: {final_top1:.1f}% (random baseline: {100/args.nb_classes:.1f}%)")
 
     
     with torch.no_grad():
