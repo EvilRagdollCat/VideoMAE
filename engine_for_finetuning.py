@@ -223,7 +223,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                         print(f"  {name}: shape={param.shape}, requires_grad={param.requires_grad}")
 
         # > collect embeddings
-        if collect_embeddings and data_iter_step % 5 == 0:  # every 5 bathces
+        # if collect_embeddings and data_iter_step % 5 == 0:  # every 5 bathces FOR LARGER DATASETS
+        if collect_embeddings and data_iter_step % 1 == 0: # every batch FOR SMALLER DATASET
             with torch.no_grad():
                 samples_float = samples.float() if samples.dtype == torch.float16 else samples
                 if hasattr(model, 'module'):
